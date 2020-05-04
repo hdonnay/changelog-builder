@@ -980,6 +980,7 @@ function run() {
             // Grab the nice name
             let tag = '';
             yield exec.exec('git', ['describe', '--exact-match', 'HEAD'], {
+                silent: true,
                 listeners: {
                     stdline: (l) => {
                         tag = l;
@@ -997,22 +998,26 @@ function run() {
                 '--exclude=*rc*',
                 'HEAD^'
             ], {
+                silent: true,
                 listeners: {
                     stdline: (l) => {
                         prev = l;
                     }
                 }
             });
+            core.debug(`examing commits between '${prev}' and '${tag}'`);
             const tagmsg = [];
             const tagmsgDone = exec.exec('git', ['for-each-ref', '--format=%(contents:body)', `refs/tags/${tag}`], {
+                silent: true,
                 listeners: {
-                    stdline: (l) => {
-                        tagmsg.push(l);
+                    stdout: (data) => {
+                        tagmsg.push(data);
                     }
                 }
             });
             let subject = '';
             const subjectDone = exec.exec('git', ['for-each-ref', '--format=%(contents:subject)', `refs/tags/${tag}`], {
+                silent: true,
                 listeners: {
                     stdline: (l) => {
                         subject = l;
@@ -1029,7 +1034,12 @@ function run() {
                 try {
                     const f = fs.createWriteStream(name);
                     yield exec.exec('git', ['show', '--quiet', '--format=%b', commit], {
-                        outStream: f
+                        silent: true,
+                        listeners: {
+                            stdout: (b) => {
+                                f.write(b);
+                            }
+                        }
                     });
                     const trailers = [];
                     yield exec.exec('git', ['interpret-trailers', '--parse', name], {
@@ -1045,7 +1055,7 @@ function run() {
                     }
                     for (const line of trailers) {
                         const kv = line.split(': ');
-                        let capture = '';
+                        const capture = [];
                         switch (kv[0]) {
                             case 'Changelog':
                                 switch (kv[1].toLowerCase()) {
@@ -1058,16 +1068,18 @@ function run() {
                                             '--trim-empty',
                                             name
                                         ], {
+                                            silent: true,
                                             listeners: {
-                                                stdline: (l) => {
-                                                    capture += l;
+                                                stdout: (data) => {
+                                                    capture.push(Buffer.from(data));
                                                 }
                                             }
                                         });
-                                        changes.update.push(capture);
+                                        changes.update.push(Buffer.concat(capture).toString());
                                         break;
                                     case 'new':
                                         yield exec.exec('git', ['show', '--quiet', '--format=%s', commit], {
+                                            silent: true,
                                             listeners: {
                                                 stdline: (l) => {
                                                     changes.new.push(l);
@@ -1077,6 +1089,7 @@ function run() {
                                         break;
                                     case 'fix':
                                         yield exec.exec('git', ['show', '--quiet', '--format=%s', commit], {
+                                            silent: true,
                                             listeners: {
                                                 stdline: (l) => {
                                                     changes.fix.push(l);
@@ -1105,17 +1118,22 @@ function run() {
             buf += '\n';
             yield tagmsgDone;
             if (tagmsg.length !== 0) {
-                buf += tagmsg.join('\n');
+                buf += Buffer.concat(tagmsg)
+                    .toString()
+                    .trim();
                 buf += '\n';
             }
             for (const msg of changes.update) {
-                buf += msg;
+                buf += msg.trim();
+                buf += '\n';
+            }
+            if (changes.update.length !== 0) {
                 buf += '\n';
             }
             if (changes.fix.length !== 0) {
                 buf += '## Bugfixes\n\n';
                 for (const item of changes.fix) {
-                    buf += ` * ${item}`;
+                    buf += ` * ${item.trim()}`;
                     buf += '\n';
                 }
                 buf += '\n';
@@ -1123,7 +1141,7 @@ function run() {
             if (changes.new.length !== 0) {
                 buf += '## Additions\n\n';
                 for (const item of changes.new) {
-                    buf += ` * ${item}`;
+                    buf += ` * ${item.trim()}`;
                     buf += '\n';
                 }
                 buf += '\n';
@@ -1146,6 +1164,7 @@ function commitsSince(commitish) {
     return __awaiter(this, void 0, void 0, function* () {
         const commits = [];
         yield exec.exec('git', ['log', '--format=tformat:%H', `${commitish}...`], {
+            silent: true,
             listeners: {
                 stdline: (l) => {
                     commits.push(l);

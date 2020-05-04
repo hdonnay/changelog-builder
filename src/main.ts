@@ -8,6 +8,7 @@ async function run(): Promise<void> {
     // Grab the nice name
     let tag = ''
     await exec.exec('git', ['describe', '--exact-match', 'HEAD'], {
+      silent: true,
       listeners: {
         stdline: (l: string) => {
           tag = l
@@ -28,6 +29,7 @@ async function run(): Promise<void> {
         'HEAD^'
       ],
       {
+        silent: true,
         listeners: {
           stdline: (l: string) => {
             prev = l
@@ -35,14 +37,16 @@ async function run(): Promise<void> {
         }
       }
     )
-    const tagmsg: string[] = []
+    core.debug(`examing commits between '${prev}' and '${tag}'`)
+    const tagmsg: Buffer[] = []
     const tagmsgDone = exec.exec(
       'git',
       ['for-each-ref', '--format=%(contents:body)', `refs/tags/${tag}`],
       {
+        silent: true,
         listeners: {
-          stdline: (l: string) => {
-            tagmsg.push(l)
+          stdout: (data: Buffer) => {
+            tagmsg.push(data)
           }
         }
       }
@@ -52,6 +56,7 @@ async function run(): Promise<void> {
       'git',
       ['for-each-ref', '--format=%(contents:subject)', `refs/tags/${tag}`],
       {
+        silent: true,
         listeners: {
           stdline: (l: string) => {
             subject = l
@@ -76,7 +81,12 @@ async function run(): Promise<void> {
       try {
         const f = fs.createWriteStream(name)
         await exec.exec('git', ['show', '--quiet', '--format=%b', commit], {
-          outStream: f
+          silent: true,
+          listeners: {
+            stdout: (b: Buffer) => {
+              f.write(b)
+            }
+          }
         })
         const trailers: string[] = []
         await exec.exec('git', ['interpret-trailers', '--parse', name], {
@@ -92,7 +102,7 @@ async function run(): Promise<void> {
         }
         for (const line of trailers) {
           const kv = line.split(': ')
-          let capture = ''
+          const capture: Buffer[] = []
           switch (kv[0]) {
             case 'Changelog':
               switch (kv[1].toLowerCase()) {
@@ -108,20 +118,22 @@ async function run(): Promise<void> {
                       name
                     ],
                     {
+                      silent: true,
                       listeners: {
-                        stdline: (l: string) => {
-                          capture += l
+                        stdout: (data: Buffer) => {
+                          capture.push(Buffer.from(data))
                         }
                       }
                     }
                   )
-                  changes.update.push(capture)
+                  changes.update.push(Buffer.concat(capture).toString())
                   break
                 case 'new':
                   await exec.exec(
                     'git',
                     ['show', '--quiet', '--format=%s', commit],
                     {
+                      silent: true,
                       listeners: {
                         stdline: (l: string) => {
                           changes.new.push(l)
@@ -135,6 +147,7 @@ async function run(): Promise<void> {
                     'git',
                     ['show', '--quiet', '--format=%s', commit],
                     {
+                      silent: true,
                       listeners: {
                         stdline: (l: string) => {
                           changes.fix.push(l)
@@ -160,22 +173,27 @@ async function run(): Promise<void> {
       }
     }
     let buf = `# ${tag} Changelog`
-    buf += '\n'
+    buf += '\n\n'
 
     await tagmsgDone
     if (tagmsg.length !== 0) {
-      buf += tagmsg.join('\n')
+      buf += Buffer.concat(tagmsg)
+        .toString()
+        .trim()
       buf += '\n'
     }
 
     for (const msg of changes.update) {
-      buf += msg
+      buf += msg.trim()
+      buf += '\n'
+    }
+    if (changes.update.length !== 0) {
       buf += '\n'
     }
     if (changes.fix.length !== 0) {
       buf += '## Bugfixes\n\n'
       for (const item of changes.fix) {
-        buf += ` * ${item}`
+        buf += ` * ${item.trim()}`
         buf += '\n'
       }
       buf += '\n'
@@ -183,7 +201,7 @@ async function run(): Promise<void> {
     if (changes.new.length !== 0) {
       buf += '## Additions\n\n'
       for (const item of changes.new) {
-        buf += ` * ${item}`
+        buf += ` * ${item.trim()}`
         buf += '\n'
       }
       buf += '\n'
@@ -208,6 +226,7 @@ async function run(): Promise<void> {
 async function commitsSince(commitish: string): Promise<string[]> {
   const commits: string[] = []
   await exec.exec('git', ['log', '--format=tformat:%H', `${commitish}...`], {
+    silent: true,
     listeners: {
       stdline: (l: string) => {
         commits.push(l)
